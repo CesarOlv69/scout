@@ -1,177 +1,174 @@
 """
-Understat scraper — version 2
-Fetches player stats for all Big 5 leagues, multiple seasons.
-Uses session cookies + better headers to bypass bot detection.
+API-Football scraper — fetches Big 5 player stats via api-football.com
+Free tier: 100 requests/day
+Runs nightly via GitHub Actions
 """
 
-import json
-import re
-import time
-import urllib.request
-import urllib.parse
-import os
-from html import unescape
-import datetime
+import json, os, datetime, time, urllib.request, urllib.error
+
+API_KEY = os.environ.get("API_FOOTBALL_KEY", "")
+BASE = "https://v3.football.api-sports.io"
 
 LEAGUES = {
-    "EPL":        "Premier League",
-    "La_liga":    "La Liga",
-    "Bundesliga": "Bundesliga",
-    "Serie_A":    "Serie A",
-    "Ligue_1":    "Ligue 1",
+    39:  "Premier League",
+    140: "La Liga",
+    78:  "Bundesliga",
+    135: "Serie A",
+    61:  "Ligue 1",
 }
 
-SEASONS = [2019, 2020, 2021, 2022, 2023, 2024, 2025]
+# Only scrape current season to stay within 100 req/day limit
+# 5 leagues × 1 season = 5-20 requests (paginated)
+CURRENT_SEASON = 2024  # 2024/25
 
-def make_opener():
-    opener = urllib.request.build_opener()
-    opener.addheaders = [
-        ('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'),
-        ('Accept', 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8'),
-        ('Accept-Language', 'en-US,en;q=0.9'),
-        ('Connection', 'keep-alive'),
-        ('Upgrade-Insecure-Requests', '1'),
-    ]
-    return opener
-
-def fetch_html(url, opener):
+def api_get(endpoint, params):
+    url = f"{BASE}{endpoint}?" + "&".join(f"{k}={v}" for k,v in params.items())
+    req = urllib.request.Request(url, headers={
+        "x-apisports-key": API_KEY,
+        "Accept": "application/json",
+    })
     try:
-        req = urllib.request.Request(url)
-        with opener.open(req, timeout=30) as resp:
-            raw = resp.read()
-            encoding = resp.info().get('Content-Encoding', '')
-            if encoding == 'gzip':
-                import gzip
-                raw = gzip.decompress(raw)
-            return raw.decode('utf-8', errors='replace')
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return json.loads(r.read().decode())
     except Exception as e:
-        print(f"    [ERR] fetch {url}: {e}")
-        return ""
+        print(f"  [ERR] {url}: {e}")
+        return None
 
-def extract_json_var(html, var_name):
-    pattern = rf"var\s+{var_name}\s*=\s*JSON\.parse\('(.+?)'\)"
-    match = re.search(pattern, html, re.DOTALL)
-    if match:
-        raw = match.group(1)
-        try:
-            raw = raw.encode('utf-8').decode('unicode_escape')
-        except Exception:
-            pass
-        raw = unescape(raw)
-        try:
-            return json.loads(raw)
-        except Exception as e:
-            print(f"    [ERR] JSON parse: {e}")
-            return None
-    return None
+def fetch_players(league_id, season):
+    all_players = []
+    page = 1
+    while True:
+        print(f"  Page {page}...")
+        data = api_get("/players", {"league": league_id, "season": season, "page": page})
+        if not data:
+            break
+        results = data.get("response", [])
+        if not results:
+            break
+        all_players.extend(results)
+        paging = data.get("paging", {})
+        if page >= paging.get("total", 1):
+            break
+        page += 1
+        time.sleep(1)
+    return all_players
 
-def fetch_league_players(league_key, season, opener):
-    url = f"https://understat.com/league/{league_key}/{season}"
-    print(f"    GET {url}")
-    html = fetch_html(url, opener)
-
-    if not html or len(html) < 1000:
-        print(f"    [WARN] Empty response ({len(html)} chars)")
-        return []
-
-    data = extract_json_var(html, 'playersData')
-    if data is None:
-        print(f"    [WARN] playersData not found. HTML length: {len(html)}")
-        return []
-
-    print(f"    -> {len(data)} players")
-    return data
-
-def compute_per90(player, league_name, season):
+def process_player(raw, league_name, season):
     try:
-        minutes = float(player.get('time', 0))
-        if minutes < 90:
+        info = raw.get("player", {})
+        stats = raw.get("statistics", [{}])[0]
+
+        games = stats.get("games", {})
+        mins = float(games.get("minutes") or 0)
+        if mins < 90:
             return None
-        per90 = minutes / 90.0
-        def p90(val):
+
+        p = mins / 90
+
+        def v(d, *keys):
+            val = d
+            for k in keys:
+                val = (val or {}).get(k)
             try:
-                return round(float(val) / per90, 3)
+                return round(float(val or 0) / p, 3)
             except:
                 return 0.0
+
+        goals_d   = stats.get("goals", {})
+        passes_d  = stats.get("passes", {})
+        dribbles_d= stats.get("dribbles", {})
+        tackles_d = stats.get("tackles", {})
+        shots_d   = stats.get("shots", {})
+
         return {
-            'id':      player.get('id', ''),
-            'name':    player.get('player_name', 'Unknown'),
-            'club':    player.get('team_title', ''),
-            'league':  league_name,
-            'season':  f"{season}/{str(season+1)[-2:]}",
-            'pos':     player.get('position', '').upper() or '?',
-            'games':   int(player.get('games', 0)),
-            'minutes': int(minutes),
-            'stats': {
-                'Goals':     p90(player.get('goals', 0)),
-                'Assists':   p90(player.get('assists', 0)),
-                'xG':        p90(player.get('xG', 0)),
-                'xA':        p90(player.get('xA', 0)),
-                'Shots':     p90(player.get('shots', 0)),
-                'KeyPasses': p90(player.get('key_passes', 0)),
-                'npG':       p90(player.get('npg', 0)),
-                'npxG':      p90(player.get('npxG', 0)),
-                'xGChain':   p90(player.get('xGChain', 0)),
-                'xGBuildup': p90(player.get('xGBuildup', 0)),
+            "id":      str(info.get("id", "")),
+            "name":    info.get("name", ""),
+            "club":    stats.get("team", {}).get("name", ""),
+            "league":  league_name,
+            "season":  f"{season}/{str(season+1)[-2:]}",
+            "pos":     (games.get("position") or "?")[:2].upper(),
+            "games":   int(games.get("appearences") or 0),
+            "minutes": int(mins),
+            "stats": {
+                "Goals":     v(goals_d,   "total") if goals_d else 0.0,
+                "Assists":   round(float(goals_d.get("assists") or 0) / p, 3),
+                "xG":        0.0,  # not on free tier
+                "xA":        0.0,
+                "Shots":     v(shots_d,    "total"),
+                "KeyPasses": v(passes_d,   "key"),
+                "Dribbles":  v(dribbles_d, "success"),
+                "Tackles":   v(tackles_d,  "total"),
+                "PassAcc":   float(passes_d.get("accuracy") or 0),
+                "npxG":      0.0,
+                "xGChain":   0.0,
             }
         }
     except Exception as e:
-        print(f"    [ERR] compute_per90: {e}")
+        print(f"  [ERR] process: {e}")
         return None
 
-def scrape_season(season, opener):
-    all_players = []
-    seen_ids = set()
-    for league_key, league_name in LEAGUES.items():
-        print(f"  [{league_name}] {season}/{str(season+1)[-2:]}")
-        raw_players = fetch_league_players(league_key, season, opener)
-        for rp in raw_players:
-            pid = rp.get('id', '')
-            p = compute_per90(rp, league_name, season)
-            if p is None:
-                continue
-            if pid in seen_ids:
-                existing = next((x for x in all_players if x['id'] == pid), None)
-                if existing and p['minutes'] > existing['minutes']:
-                    all_players.remove(existing)
-                    all_players.append(p)
-            else:
-                seen_ids.add(pid)
-                all_players.append(p)
-        time.sleep(3)
-    all_players.sort(key=lambda p: p['name'])
-    return all_players
-
 def main():
-    os.makedirs('data', exist_ok=True)
-    opener = make_opener()
+    if not API_KEY:
+        print("ERROR: API_FOOTBALL_KEY not set")
+        exit(1)
 
-    # Warm up session
-    print("Warming up session...")
-    fetch_html("https://understat.com/", opener)
-    time.sleep(2)
+    os.makedirs("data", exist_ok=True)
 
-    summary = {}
-    for season in SEASONS:
-        print(f"\n=== Season {season}/{str(season+1)[-2:]} ===")
-        players = scrape_season(season, opener)
-        print(f"  Total: {len(players)} players")
-        with open(f"data/{season}.json", 'w', encoding='utf-8') as f:
-            json.dump(players, f, ensure_ascii=False, separators=(',', ':'))
-        summary[str(season)] = len(players)
+    # Load existing data to preserve historical seasons
+    all_seasons_data = {}
+    for yr in [2019,2020,2021,2022,2023,2024,2025]:
+        path = f"data/{yr}.json"
+        if os.path.exists(path):
+            with open(path) as f:
+                all_seasons_data[yr] = json.load(f)
+
+    # Scrape current season
+    print(f"\n=== Season {CURRENT_SEASON}/{str(CURRENT_SEASON+1)[-2:]} ===")
+    players, seen = [], set()
+
+    for league_id, league_name in LEAGUES.items():
+        print(f"  [{league_name}]")
+        raw_list = fetch_players(league_id, CURRENT_SEASON)
+        print(f"  -> {len(raw_list)} raw players")
+        for raw in raw_list:
+            pid = str(raw.get("player", {}).get("id", ""))
+            p = process_player(raw, league_name, CURRENT_SEASON)
+            if not p:
+                continue
+            if pid in seen:
+                ex = next((x for x in players if x["id"] == pid), None)
+                if ex and p["minutes"] > ex["minutes"]:
+                    players.remove(ex); players.append(p)
+            else:
+                seen.add(pid); players.append(p)
         time.sleep(2)
 
+    players.sort(key=lambda x: x["name"])
+    
+    # Save as both 2024 and 2025 (same season)
+    for yr in [2024, 2025]:
+        with open(f"data/{yr}.json", "w") as f:
+            json.dump(players, f, ensure_ascii=False, separators=(",",":"))
+    
+    all_seasons_data[2024] = players
+    all_seasons_data[2025] = players
+
+    # Count all seasons
+    counts = {str(yr): len(all_seasons_data.get(yr, [])) for yr in [2019,2020,2021,2022,2023,2024,2025]}
+
     manifest = {
-        'seasons': SEASONS,
-        'leagues': list(LEAGUES.values()),
-        'updated': datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC'),
-        'counts': summary,
+        "seasons": [2024, 2025],  # only current season available via API free tier
+        "leagues": list(LEAGUES.values()),
+        "updated": datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
+        "counts": counts,
+        "source": "api-football.com",
     }
-    with open('data/manifest.json', 'w') as f:
+    with open("data/manifest.json", "w") as f:
         json.dump(manifest, f, indent=2)
 
-    print("\nDone!")
-    print("Counts:", summary)
+    print(f"\nDone! {len(players)} players saved.")
+    if len(players) == 0:
+        exit(1)
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
