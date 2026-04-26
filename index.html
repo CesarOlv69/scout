@@ -1,0 +1,732 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Scout">
+<meta name="theme-color" content="#06090f">
+<title>Scout — Player Radar</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@300;400;500;600;700;800;900&family=Barlow:wght@300;400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg:       #06090f;
+  --surf1:    #0c1018;
+  --surf2:    #111722;
+  --surf3:    #171f2e;
+  --border1:  #1a2333;
+  --border2:  #223044;
+  --text:     #dde4f0;
+  --muted:    #4e6080;
+  --muted2:   #7a90b0;
+  --accent:   #00c8f0;
+  --green:    #00e89a;
+  --yellow:   #f5c842;
+  --red:      #ff5f6e;
+
+  --c1: #00c8f0; --c2: #ff5f6e; --c3: #f5c842; --c4: #00e89a; --c5: #b98fff;
+
+  --font-d: 'Barlow Condensed', sans-serif;
+  --font-b: 'Barlow', sans-serif;
+  --safe-top:    env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+html, body {
+  min-height: 100dvh; width: 100%;
+  background: var(--bg); color: var(--text);
+  font-family: var(--font-b); font-size: 15px;
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior: none;
+}
+
+/* ── LOADER ── */
+#loader {
+  position: fixed; inset: 0; z-index: 999;
+  background: var(--bg);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 20px; transition: opacity 0.4s;
+}
+#loader.gone { opacity: 0; pointer-events: none; }
+.loader-logo { font-family: var(--font-d); font-size: 42px; font-weight: 900; letter-spacing: 0.08em; text-transform: uppercase; background: linear-gradient(135deg, var(--accent), var(--green)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+.loader-bar-track { width: 160px; height: 2px; background: var(--border2); border-radius: 2px; overflow: hidden; }
+.loader-bar-fill { height: 100%; background: linear-gradient(90deg, var(--accent), var(--green)); border-radius: 2px; animation: loadBar 1.8s ease-in-out infinite; }
+@keyframes loadBar { 0%{width:0;margin-left:0} 50%{width:100%;margin-left:0} 100%{width:0;margin-left:100%} }
+.loader-msg { font-family: var(--font-d); font-size: 12px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--muted); }
+
+/* ── HEADER ── */
+header {
+  padding: calc(var(--safe-top) + 14px) 18px 12px;
+  border-bottom: 1px solid var(--border1);
+  background: rgba(6,9,15,0.92);
+  position: sticky; top: 0; z-index: 100;
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+}
+.hdr { display: flex; align-items: center; justify-content: space-between; max-width: 680px; margin: 0 auto; }
+.logo { font-family: var(--font-d); font-size: 26px; font-weight: 900; letter-spacing: 0.08em; text-transform: uppercase; background: linear-gradient(135deg, var(--accent), var(--green)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+.logo-sub { font-family: var(--font-d); font-size: 10px; font-weight: 500; color: var(--muted); letter-spacing: 0.3em; text-transform: uppercase; margin-top: -3px; }
+.hdr-meta { text-align: right; }
+.hdr-updated { font-family: var(--font-d); font-size: 11px; color: var(--muted); letter-spacing: 0.08em; }
+.hdr-source { font-family: var(--font-d); font-size: 10px; color: var(--muted); letter-spacing: 0.05em; margin-top: 1px; }
+.dot-live { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--green); margin-right: 4px; animation: pulse 2s ease-in-out infinite; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+/* ── MAIN ── */
+main { max-width: 680px; margin: 0 auto; padding: 18px 14px calc(var(--safe-bottom) + 80px); }
+
+/* ── SEASON + LEAGUE FILTERS ── */
+.filters { display: flex; flex-direction: column; gap: 10px; margin-bottom: 18px; }
+.filter-row { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; }
+.filter-row::-webkit-scrollbar { display: none; }
+.filter-label { font-family: var(--font-d); font-size: 10px; font-weight: 600; letter-spacing: 0.2em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+.chip {
+  flex-shrink: 0; padding: 6px 13px;
+  background: var(--surf2); border: 1px solid var(--border1);
+  color: var(--muted2); border-radius: 100px;
+  font-family: var(--font-d); font-size: 13px; font-weight: 600; letter-spacing: 0.04em;
+  cursor: pointer; white-space: nowrap;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  -webkit-tap-highlight-color: transparent;
+}
+.chip.active { background: var(--accent); border-color: var(--accent); color: #06090f; }
+.chip:active { opacity: 0.7; }
+
+/* ── SEARCH ── */
+.search-label { font-family: var(--font-d); font-size: 10px; font-weight: 600; letter-spacing: 0.2em; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; display: block; }
+.search-row { display: flex; gap: 8px; position: relative; margin-bottom: 14px; }
+.search-wrap { flex: 1; position: relative; }
+#playerInput {
+  width: 100%; padding: 13px 16px;
+  background: var(--surf2); border: 1px solid var(--border2);
+  color: var(--text); font-family: var(--font-b); font-size: 16px;
+  border-radius: 12px; outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+  -webkit-appearance: none;
+}
+#playerInput:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(0,200,240,0.08); }
+#playerInput::placeholder { color: var(--muted); }
+#playerInput:disabled { opacity: 0.4; }
+
+.ac-list {
+  position: absolute; top: calc(100% + 4px); left: 0; right: 0;
+  background: var(--surf2); border: 1px solid var(--border2);
+  border-radius: 12px; overflow: hidden; z-index: 200;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.6); display: none;
+  max-height: 320px; overflow-y: auto;
+}
+.ac-list.open { display: block; }
+.ac-item { padding: 10px 16px; cursor: pointer; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--border1); transition: background 0.12s; -webkit-tap-highlight-color: transparent; }
+.ac-item:last-child { border-bottom: none; }
+.ac-item:active, .ac-item:hover { background: var(--surf3); }
+.ac-name { font-size: 14px; font-weight: 500; flex: 1; }
+.ac-club { font-size: 11px; color: var(--muted2); font-family: var(--font-d); letter-spacing: 0.04em; }
+.ac-pos { font-size: 11px; color: var(--muted); font-family: var(--font-d); letter-spacing: 0.06em; background: var(--border1); padding: 1px 6px; border-radius: 4px; }
+
+.btn-add {
+  padding: 13px 20px; background: var(--accent); color: #06090f;
+  border: none; border-radius: 12px;
+  font-family: var(--font-d); font-size: 22px; font-weight: 700;
+  cursor: pointer; white-space: nowrap; line-height: 1;
+  transition: opacity 0.15s, transform 0.1s;
+  -webkit-tap-highlight-color: transparent;
+}
+.btn-add:active { opacity: 0.75; transform: scale(0.96); }
+.btn-add:disabled { opacity: 0.3; }
+
+/* ── PLAYERS BAR ── */
+.players-bar { display: flex; flex-wrap: wrap; gap: 7px; min-height: 10px; margin-bottom: 20px; }
+.player-tag {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 10px 5px 11px;
+  border-radius: 100px; font-size: 13px;
+  font-family: var(--font-d); font-weight: 600; letter-spacing: 0.03em;
+  border: 1px solid; cursor: default;
+  animation: tagIn 0.18s ease;
+}
+@keyframes tagIn { from{opacity:0;transform:scale(0.82)} to{opacity:1;transform:scale(1)} }
+.tag-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.tag-rm { background: none; border: none; cursor: pointer; color: inherit; opacity: 0.55; padding: 0 0 0 3px; font-size: 15px; line-height: 1; -webkit-tap-highlight-color: transparent; }
+.tag-rm:active { opacity: 1; }
+
+/* ── LIMIT WARN ── */
+.limit-msg { display: none; font-size: 13px; color: var(--yellow); text-align: center; padding: 8px; font-family: var(--font-d); letter-spacing: 0.06em; animation: fadeIn 0.2s; }
+.limit-msg.show { display: block; }
+
+/* ── STAT TOGGLE ── */
+.stat-config { margin-bottom: 18px; }
+.stat-config-label { font-family: var(--font-d); font-size: 10px; font-weight: 600; letter-spacing: 0.2em; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; display: block; }
+.stat-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.stat-chip {
+  padding: 5px 11px; background: var(--surf2); border: 1px solid var(--border1);
+  color: var(--muted2); border-radius: 8px;
+  font-family: var(--font-d); font-size: 12px; font-weight: 600; letter-spacing: 0.04em;
+  cursor: pointer; transition: all 0.15s; -webkit-tap-highlight-color: transparent;
+}
+.stat-chip.active { background: rgba(0,200,240,0.12); border-color: var(--accent); color: var(--accent); }
+.stat-chip:active { opacity: 0.7; }
+
+/* ── CHART CARD ── */
+.card {
+  background: var(--surf1); border: 1px solid var(--border1);
+  border-radius: 16px; padding: 16px 14px; margin-bottom: 14px;
+}
+.card-hdr { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+.card-title { font-family: var(--font-d); font-size: 11px; font-weight: 700; letter-spacing: 0.22em; text-transform: uppercase; color: var(--muted); }
+.btn-reset { padding: 5px 12px; background: transparent; border: 1px solid var(--border2); color: var(--muted); border-radius: 8px; font-family: var(--font-d); font-size: 11px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; cursor: pointer; transition: border-color 0.15s, color 0.15s; -webkit-tap-highlight-color: transparent; }
+.btn-reset:active { border-color: var(--red); color: var(--red); }
+
+.chart-wrap { position: relative; width: 100%; aspect-ratio: 1 / 1; }
+canvas { width: 100% !important; height: 100% !important; }
+
+.empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 260px; gap: 10px; }
+.empty-icon { font-size: 44px; opacity: 0.15; }
+.empty-text { font-family: var(--font-d); font-size: 13px; letter-spacing: 0.15em; text-transform: uppercase; color: var(--muted); text-align: center; line-height: 1.6; }
+
+/* ── STATS BREAKDOWN ── */
+.breakdown { display: none; }
+.breakdown.visible { display: block; }
+.breakdown-title { font-family: var(--font-d); font-size: 10px; font-weight: 700; letter-spacing: 0.22em; text-transform: uppercase; color: var(--muted); margin-bottom: 10px; }
+.stat-rows { display: grid; gap: 6px; }
+.stat-row { background: var(--surf1); border: 1px solid var(--border1); border-radius: 10px; padding: 10px 13px; }
+.stat-row-name { font-family: var(--font-d); font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); margin-bottom: 7px; }
+.bar-rows { display: flex; flex-direction: column; gap: 5px; }
+.bar-row { display: flex; align-items: center; gap: 8px; }
+.bar-lbl { font-size: 12px; color: var(--muted2); width: 76px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-d); letter-spacing: 0.02em; }
+.bar-track { flex: 1; height: 4px; background: var(--border1); border-radius: 2px; overflow: hidden; }
+.bar-fill { height: 100%; border-radius: 2px; width: 0; transition: width 0.45s cubic-bezier(.16,1,.3,1); }
+.bar-val { font-size: 12px; font-family: var(--font-d); font-weight: 700; width: 38px; text-align: right; }
+
+/* ── PLAYER PROFILE CARDS ── */
+.profiles { display: none; }
+.profiles.visible { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-top: 14px; }
+.profile-card { background: var(--surf1); border: 1px solid var(--border1); border-radius: 12px; padding: 12px; }
+.profile-name { font-family: var(--font-d); font-size: 16px; font-weight: 800; letter-spacing: 0.03em; margin-bottom: 2px; }
+.profile-club { font-family: var(--font-d); font-size: 11px; color: var(--muted2); letter-spacing: 0.05em; }
+.profile-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 10px; }
+.ps { background: var(--surf3); border-radius: 6px; padding: 6px 8px; }
+.ps-val { font-family: var(--font-d); font-size: 18px; font-weight: 800; }
+.ps-lbl { font-family: var(--font-d); font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); margin-top: 1px; }
+
+/* ── ERROR BANNER ── */
+.err-banner { background: rgba(255,95,110,0.1); border: 1px solid rgba(255,95,110,0.3); border-radius: 10px; padding: 12px 16px; color: var(--red); font-family: var(--font-d); font-size: 13px; letter-spacing: 0.05em; margin-bottom: 16px; display: none; }
+.err-banner.show { display: block; }
+
+@keyframes fadeIn { from{opacity:0} to{opacity:1} }
+</style>
+</head>
+<body>
+
+<!-- LOADER -->
+<div id="loader">
+  <div class="loader-logo">Scout</div>
+  <div class="loader-bar-track"><div class="loader-bar-fill"></div></div>
+  <div class="loader-msg" id="loaderMsg">Loading data…</div>
+</div>
+
+<header>
+  <div class="hdr">
+    <div>
+      <div class="logo">Scout</div>
+      <div class="logo-sub">Player Radar</div>
+    </div>
+    <div class="hdr-meta">
+      <div class="hdr-updated" id="hdrUpdated">—</div>
+      <div class="hdr-source">understat.com</div>
+    </div>
+  </div>
+</header>
+
+<main>
+
+  <!-- ERROR -->
+  <div class="err-banner" id="errBanner"></div>
+
+  <!-- FILTERS -->
+  <div class="filters">
+    <div>
+      <div class="filter-label">Season</div>
+      <div class="filter-row" id="seasonRow"></div>
+    </div>
+    <div>
+      <div class="filter-label">League</div>
+      <div class="filter-row" id="leagueRow"></div>
+    </div>
+  </div>
+
+  <!-- SEARCH -->
+  <span class="search-label">Add player</span>
+  <div class="search-row">
+    <div class="search-wrap">
+      <input type="text" id="playerInput" placeholder="Search player…" autocomplete="off" autocorrect="off" spellcheck="false" disabled>
+      <div class="ac-list" id="acList"></div>
+    </div>
+    <button class="btn-add" id="btnAdd" disabled>＋</button>
+  </div>
+  <div class="limit-msg" id="limitMsg">Maximum 5 players reached</div>
+
+  <!-- PLAYER TAGS -->
+  <div class="players-bar" id="playersBar"></div>
+
+  <!-- STAT AXES CONFIG -->
+  <div class="stat-config" id="statConfig" style="display:none">
+    <span class="stat-config-label">Radar axes</span>
+    <div class="stat-chips" id="statChips"></div>
+  </div>
+
+  <!-- RADAR CHART -->
+  <div class="card">
+    <div class="card-hdr">
+      <span class="card-title">Radar</span>
+      <button class="btn-reset" id="btnReset">Reset</button>
+    </div>
+    <div id="emptyState" class="empty-state">
+      <div class="empty-icon">⚽</div>
+      <div class="empty-text">Select a season &amp; league<br>then search for players</div>
+    </div>
+    <div class="chart-wrap" id="chartWrap" style="display:none">
+      <canvas id="radarChart"></canvas>
+    </div>
+  </div>
+
+  <!-- PROFILE CARDS -->
+  <div class="profiles" id="profiles"></div>
+
+  <!-- BREAKDOWN -->
+  <div class="breakdown" id="breakdown">
+    <div class="breakdown-title">Stat breakdown</div>
+    <div class="stat-rows" id="statRows"></div>
+  </div>
+
+</main>
+
+<script>
+// ─── CONFIG ────────────────────────────────────────────────────────────────
+// ⚠️  CHANGE THIS to your GitHub username/repo before deploying
+const GITHUB_RAW = "https://raw.githubusercontent.com/CesarOlv69/scout/main/data";
+
+const ALL_STATS = [
+  { key: "Goals",     label: "Goals",      max: 1.2 },
+  { key: "Assists",   label: "Assists",    max: 0.8 },
+  { key: "xG",       label: "xG",         max: 1.0 },
+  { key: "xA",       label: "xA",         max: 0.6 },
+  { key: "Shots",    label: "Shots",      max: 6.0 },
+  { key: "KeyPasses",label: "Key Pass",   max: 4.0 },
+  { key: "npxG",     label: "npxG",       max: 1.0 },
+  { key: "xGChain",  label: "xG Chain",   max: 1.5 },
+  { key: "xGBuildup",label: "xG Build",   max: 1.0 },
+];
+const DEFAULT_AXES = ["Goals","Assists","xG","xA","Shots","KeyPasses","xGChain"];
+const COLORS = ["--c1","--c2","--c3","--c4","--c5"];
+const LEAGUES_ALL = ["All leagues","Premier League","La Liga","Bundesliga","Serie A","Ligue 1"];
+
+// ─── STATE ─────────────────────────────────────────────────────────────────
+let manifest = null;
+let allPlayers = [];          // currently loaded season's players
+let selected = [];            // up to 5 player objects
+let chart = null;
+let activeSeason = null;
+let activeLeague = "All leagues";
+let activeAxes = [...DEFAULT_AXES];
+let loadedSeasons = {};       // cache: season → players array
+
+// ─── HELPERS ───────────────────────────────────────────────────────────────
+const $ = id => document.getElementById(id);
+const getVar = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+
+function hexAlpha(hex, a) {
+  hex = hex.replace('#','');
+  if (hex.length === 3) hex = hex.split('').map(c=>c+c).join('');
+  const r=parseInt(hex.slice(0,2),16), g=parseInt(hex.slice(2,4),16), b=parseInt(hex.slice(4,6),16);
+  return `rgba(${r},${g},${b},${a})`;
+}
+
+function showErr(msg) {
+  const el = $('errBanner');
+  el.textContent = msg;
+  el.classList.add('show');
+}
+
+// ─── LOAD MANIFEST ─────────────────────────────────────────────────────────
+async function loadManifest() {
+  $('loaderMsg').textContent = 'Fetching manifest…';
+  try {
+    const res = await fetch(`${GITHUB_RAW}/manifest.json?_=${Date.now()}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    manifest = await res.json();
+    return true;
+  } catch(e) {
+    showErr(`⚠ Could not load data manifest. Check your GITHUB_RAW URL. (${e.message})`);
+    return false;
+  }
+}
+
+async function loadSeason(year) {
+  if (loadedSeasons[year]) return loadedSeasons[year];
+  $('loaderMsg').textContent = `Loading ${year}/${String(year+1).slice(-2)}…`;
+  try {
+    const res = await fetch(`${GITHUB_RAW}/${year}.json?_=${Date.now()}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    loadedSeasons[year] = data;
+    return data;
+  } catch(e) {
+    showErr(`⚠ Could not load season ${year}. (${e.message})`);
+    return [];
+  }
+}
+
+// ─── INIT ──────────────────────────────────────────────────────────────────
+async function init() {
+  const ok = await loadManifest();
+  if (!ok) {
+    $('loader').classList.add('gone');
+    return;
+  }
+
+  // Build season chips
+  const seasonRow = $('seasonRow');
+  [...manifest.seasons].reverse().forEach((yr, i) => {
+    const chip = document.createElement('div');
+    chip.className = 'chip' + (i===0 ? ' active' : '');
+    chip.textContent = `${yr}/${String(yr+1).slice(-2)}`;
+    chip.dataset.season = yr;
+    chip.addEventListener('click', () => selectSeason(yr));
+    seasonRow.appendChild(chip);
+  });
+
+  // Build league chips
+  const leagueRow = $('leagueRow');
+  LEAGUES_ALL.forEach((l, i) => {
+    const chip = document.createElement('div');
+    chip.className = 'chip' + (i===0 ? ' active' : '');
+    chip.textContent = l;
+    chip.dataset.league = l;
+    chip.addEventListener('click', () => selectLeague(l));
+    leagueRow.appendChild(chip);
+  });
+
+  // Build stat chips
+  const statChipsEl = $('statChips');
+  ALL_STATS.forEach(s => {
+    const chip = document.createElement('div');
+    chip.className = 'stat-chip' + (activeAxes.includes(s.key) ? ' active' : '');
+    chip.textContent = s.label;
+    chip.dataset.key = s.key;
+    chip.addEventListener('click', () => toggleAxis(s.key, chip));
+    statChipsEl.appendChild(chip);
+  });
+
+  // Default: load most recent season
+  activeSeason = manifest.seasons[manifest.seasons.length - 1];
+  await selectSeason(activeSeason);
+
+  // Update header
+  $('hdrUpdated').innerHTML = `<span class="dot-live"></span>${manifest.updated}`;
+
+  $('loader').classList.add('gone');
+  setTimeout(() => $('loader').remove(), 500);
+}
+
+async function selectSeason(year) {
+  activeSeason = year;
+  // Update chips
+  document.querySelectorAll('#seasonRow .chip').forEach(c => c.classList.toggle('active', parseInt(c.dataset.season) === year));
+
+  setInputDisabled(true);
+  $('loaderMsg') && ($('loaderMsg').textContent = `Loading ${year}/${String(year+1).slice(-2)}…`);
+
+  const data = await loadSeason(year);
+  allPlayers = data;
+  selected = [];
+  renderAll();
+  setInputDisabled(false);
+}
+
+function selectLeague(league) {
+  activeLeague = league;
+  document.querySelectorAll('#leagueRow .chip').forEach(c => c.classList.toggle('active', c.dataset.league === league));
+  // Just update autocomplete filter, no reload needed
+}
+
+function toggleAxis(key, chip) {
+  if (activeAxes.includes(key)) {
+    if (activeAxes.length <= 3) return; // minimum 3 axes
+    activeAxes = activeAxes.filter(k => k !== key);
+    chip.classList.remove('active');
+  } else {
+    if (activeAxes.length >= 9) return;
+    activeAxes.push(key);
+    chip.classList.add('active');
+  }
+  renderChart();
+  renderBreakdown();
+}
+
+function setInputDisabled(v) {
+  $('playerInput').disabled = v;
+  $('btnAdd').disabled = v;
+}
+
+// ─── AUTOCOMPLETE ──────────────────────────────────────────────────────────
+function filterPlayers(q) {
+  if (!q || q.length < 2) return [];
+  q = q.toLowerCase();
+  return allPlayers
+    .filter(p => {
+      if (activeLeague !== "All leagues" && p.league !== activeLeague) return false;
+      return p.name.toLowerCase().includes(q);
+    })
+    .slice(0, 8);
+}
+
+function renderAC(players) {
+  const acList = $('acList');
+  if (!players.length) { acList.innerHTML=''; acList.classList.remove('open'); return; }
+  acList.innerHTML = players.map(p => `
+    <div class="ac-item" data-name="${p.name}" data-id="${p.id}">
+      <div style="flex:1">
+        <div class="ac-name">${p.name}</div>
+        <div class="ac-club">${p.club} · ${p.league}</div>
+      </div>
+      <span class="ac-pos">${p.pos || '?'}</span>
+    </div>`).join('');
+  acList.classList.add('open');
+  acList.querySelectorAll('.ac-item').forEach(el => {
+    el.addEventListener('pointerdown', e => { e.preventDefault(); selectPlayerByName(el.dataset.name); });
+  });
+}
+
+$('playerInput').addEventListener('input', e => renderAC(filterPlayers(e.target.value)));
+$('playerInput').addEventListener('keydown', e => { if (e.key==='Enter') addFromInput(); });
+document.addEventListener('pointerdown', e => { if (!e.target.closest('.search-wrap')) $('acList').classList.remove('open'); });
+
+function selectPlayerByName(name) {
+  $('playerInput').value = name;
+  $('acList').classList.remove('open');
+}
+
+// ─── ADD / REMOVE ──────────────────────────────────────────────────────────
+function addFromInput() {
+  const val = $('playerInput').value.trim();
+  const player = allPlayers.find(p => p.name.toLowerCase() === val.toLowerCase());
+  if (!player) {
+    const input = $('playerInput');
+    input.style.borderColor = 'var(--red)';
+    setTimeout(() => input.style.borderColor = '', 700);
+    return;
+  }
+  if (selected.find(p => p.id === player.id)) { $('playerInput').value=''; return; }
+  if (selected.length >= 5) { showLimit(); return; }
+  selected.push(player);
+  $('playerInput').value = '';
+  $('acList').classList.remove('open');
+  renderAll();
+}
+
+$('btnAdd').addEventListener('click', addFromInput);
+
+function removePlayer(id) {
+  selected = selected.filter(p => p.id !== id);
+  renderAll();
+}
+
+$('btnReset').addEventListener('click', () => { selected = []; renderAll(); });
+
+function showLimit() {
+  const m = $('limitMsg');
+  m.classList.add('show');
+  setTimeout(() => m.classList.remove('show'), 2000);
+}
+
+// ─── RENDER ────────────────────────────────────────────────────────────────
+function renderAll() {
+  renderTags();
+  renderChart();
+  renderProfiles();
+  renderBreakdown();
+  $('statConfig').style.display = selected.length > 0 ? 'block' : 'none';
+}
+
+function renderTags() {
+  const bar = $('playersBar');
+  bar.innerHTML = '';
+  selected.forEach((p, i) => {
+    const color = getVar(COLORS[i]);
+    const tag = document.createElement('div');
+    tag.className = 'player-tag';
+    tag.style.cssText = `color:${color};border-color:${color}22;background:${color}12;`;
+    tag.innerHTML = `<span class="tag-dot" style="background:${color}"></span>${p.name}<button class="tag-rm">✕</button>`;
+    tag.querySelector('.tag-rm').addEventListener('click', () => removePlayer(p.id));
+    bar.appendChild(tag);
+  });
+}
+
+// ─── CHART ─────────────────────────────────────────────────────────────────
+function getActiveStatDefs() {
+  return ALL_STATS.filter(s => activeAxes.includes(s.key));
+}
+
+function normalize(player) {
+  return getActiveStatDefs().map(s => {
+    const raw = player.stats[s.key] ?? 0;
+    return Math.min(100, Math.round((raw / s.max) * 100));
+  });
+}
+
+function renderChart() {
+  const empty = $('emptyState');
+  const wrap = $('chartWrap');
+  if (selected.length === 0) {
+    empty.style.display = 'flex'; wrap.style.display = 'none';
+    if (chart) { chart.destroy(); chart = null; }
+    return;
+  }
+  empty.style.display = 'none'; wrap.style.display = 'block';
+
+  const statDefs = getActiveStatDefs();
+  const datasets = selected.map((p, i) => {
+    const color = getVar(COLORS[i]);
+    return {
+      label: p.name,
+      data: normalize(p),
+      borderColor: color,
+      backgroundColor: hexAlpha(color, 0.1),
+      pointBackgroundColor: color,
+      pointBorderColor: color,
+      pointHoverBackgroundColor: color,
+      borderWidth: 2,
+      pointRadius: 4,
+      pointHoverRadius: 7,
+    };
+  });
+
+  if (chart) { chart.destroy(); }
+  const ctx = $('radarChart').getContext('2d');
+  chart = new Chart(ctx, {
+    type: 'radar',
+    data: { labels: statDefs.map(s => s.label), datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: true,
+      animation: { duration: 400 },
+      scales: {
+        r: {
+          min: 0, max: 100,
+          ticks: { display: false, stepSize: 25 },
+          grid: { color: 'rgba(255,255,255,0.05)', lineWidth: 1 },
+          angleLines: { color: 'rgba(255,255,255,0.07)', lineWidth: 1 },
+          pointLabels: {
+            color: '#6a80a0',
+            font: { family: "'Barlow Condensed'", size: 11, weight: '700' },
+          },
+        }
+      },
+      plugins: {
+        legend: {
+          display: true, position: 'bottom',
+          labels: {
+            color: '#b0bdd0',
+            font: { family: "'Barlow Condensed'", size: 13 },
+            boxWidth: 9, boxHeight: 9, borderRadius: 4, padding: 14,
+          }
+        },
+        tooltip: {
+          backgroundColor: '#0c1018',
+          borderColor: '#223044', borderWidth: 1,
+          titleColor: '#dde4f0', bodyColor: '#7a90b0',
+          titleFont: { family: "'Barlow Condensed'", size: 14, weight: '700' },
+          bodyFont: { family: "'Barlow'", size: 12 },
+          padding: 12,
+          callbacks: {
+            label: ctx => {
+              const statDef = statDefs[ctx.dataIndex];
+              const raw = selected[ctx.datasetIndex]?.stats[statDef?.key];
+              return ` ${ctx.dataset.label}: ${raw?.toFixed(2) ?? ctx.raw}`;
+            }
+          }
+        }
+      }
+    }
+  });
+}
+
+// ─── PROFILES ──────────────────────────────────────────────────────────────
+function renderProfiles() {
+  const el = $('profiles');
+  if (selected.length === 0) { el.classList.remove('visible'); return; }
+  el.classList.add('visible');
+  el.innerHTML = '';
+  selected.forEach((p, i) => {
+    const color = getVar(COLORS[i]);
+    const card = document.createElement('div');
+    card.className = 'profile-card';
+    card.style.borderColor = color + '30';
+    const keyStats = [
+      {k:'Goals',l:'Goals'},{k:'Assists',l:'Assists'},{k:'xG',l:'xG'},{k:'xA',l:'xA'}
+    ];
+    card.innerHTML = `
+      <div class="profile-name" style="color:${color}">${p.name}</div>
+      <div class="profile-club">${p.club} · ${p.pos || '?'}</div>
+      <div class="profile-stats">
+        ${keyStats.map(s=>`
+          <div class="ps">
+            <div class="ps-val" style="color:${color}">${(p.stats[s.k]??0).toFixed(2)}</div>
+            <div class="ps-lbl">${s.l}</div>
+          </div>`).join('')}
+      </div>`;
+    el.appendChild(card);
+  });
+}
+
+// ─── BREAKDOWN ─────────────────────────────────────────────────────────────
+function renderBreakdown() {
+  const el = $('breakdown');
+  const rowsEl = $('statRows');
+  if (selected.length === 0) { el.classList.remove('visible'); return; }
+  el.classList.add('visible');
+  rowsEl.innerHTML = '';
+
+  getActiveStatDefs().forEach(s => {
+    const row = document.createElement('div');
+    row.className = 'stat-row';
+    const nameEl = document.createElement('div');
+    nameEl.className = 'stat-row-name';
+    nameEl.textContent = s.label;
+    row.appendChild(nameEl);
+    const barsEl = document.createElement('div');
+    barsEl.className = 'bar-rows';
+
+    const vals = selected.map(p => p.stats[s.key] ?? 0);
+    const localMax = Math.max(...vals, s.max * 0.01);
+
+    selected.forEach((p, pi) => {
+      const color = getVar(COLORS[pi]);
+      const raw = p.stats[s.key] ?? 0;
+      const pct = Math.min(100, Math.round((raw / s.max) * 100));
+      const barRow = document.createElement('div');
+      barRow.className = 'bar-row';
+      barRow.innerHTML = `
+        <span class="bar-lbl" style="color:${color}">${p.name.split(' ').slice(-1)[0]}</span>
+        <div class="bar-track"><div class="bar-fill" style="background:${color}"></div></div>
+        <span class="bar-val" style="color:${color}">${raw.toFixed(2)}</span>`;
+      barsEl.appendChild(barRow);
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        barRow.querySelector('.bar-fill').style.width = pct + '%';
+      }));
+    });
+
+    row.appendChild(barsEl);
+    rowsEl.appendChild(row);
+  });
+}
+
+// ─── BOOT ──────────────────────────────────────────────────────────────────
+init();
+</script>
+</body>
+</html>
