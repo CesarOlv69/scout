@@ -1,5 +1,6 @@
 {
   "seasons": [
+    2024,
     2025
   ],
   "leagues": [
@@ -9,9 +10,10 @@
     "Serie A",
     "Ligue 1"
   ],
-  "updated": "2026-04-26 23:16 UTC",
+  "updated": "2026-04-27 05:48 UTC",
   "counts": {
-    "2025": 206
+    "2024": 12,
+    "2025": 12
   },
-  "source": "curated-2025-26"
+  "source": "api-football.com"
 }
