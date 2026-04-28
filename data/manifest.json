@@ -1,13 +1,19 @@
 {
-  "updated": "2026-04-28 00:02",
-  "players": 2611,
-  "clubs": 96,
-  "source": "Understat",
-  "competitions": [
+  "seasons": [
+    2024,
+    2025
+  ],
+  "leagues": [
     "Premier League",
     "La Liga",
     "Bundesliga",
     "Serie A",
     "Ligue 1"
-  ]
+  ],
+  "updated": "2026-04-28 05:54 UTC",
+  "counts": {
+    "2024": 12,
+    "2025": 12
+  },
+  "source": "api-football.com"
 }
